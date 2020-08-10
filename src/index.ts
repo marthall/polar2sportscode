@@ -1,10 +1,20 @@
 import * as XLSX from "xlsx";
 import builder from "xmlbuilder";
 
+const STEPS_PER_ENTRY = 10;
+
+const TIME = 1
+const HR = 2
+const SPEED = 3
+const DISTANCE = 4
+const ACCELERATION = 5
+const CADENCE = 6
+
+
 const onLoad = (fileEvent: Event) => {
   //@ts-ignore
   var files = fileEvent.target.files,
-    f = files[0];
+    f : File = files[0];
 
   const reader = new FileReader();
   reader.onload = function (e) {
@@ -12,28 +22,29 @@ const onLoad = (fileEvent: Event) => {
     var data = new Uint8Array(e.target.result);
     var workbook = XLSX.read(data, { type: "array", cellDates: true });
 
-    const firstPageName = workbook.SheetNames[0];
-    const firstPage = workbook.Sheets[firstPageName];
-    const json_data: any[][] = XLSX.utils.sheet_to_json(firstPage, {
-      header: 1,
-    });
+    let rows : any[][] = []
 
-    // var cell_address = { c: 0, r: 100 };
-    // var cell_ref = XLSX.utils.encode_cell(cell_address);
-    //
-    // console.log(firstPage[cell_ref]);
-    // console.log(firstPage["B100"]);
-    console.log(json_data);
-    writeXml(json_data);
+    for (let sheetIndex = 0; sheetIndex < workbook.SheetNames.length; sheetIndex++) {
+      const sheetName = workbook.SheetNames[sheetIndex];
+      const sheet = workbook.Sheets[sheetName];
+      const data: any[][] = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+      });
+
+      rows.push(...data.slice(1))
+    }
+
+    console.log(rows);
+    writeXml(f.name, rows);
   };
 
   reader.readAsArrayBuffer(f);
 };
 
-const writeXml = (json_data: any[][]) => {
+const writeXml = (filename: string, json_data: any[][]) => {
   const file = builder.create("file", { headless: true });
 
-  const startTime: Date = json_data[1][1];
+  const startTime: Date = json_data[1][TIME];
 
   const yyyy = startTime.getFullYear();
   const MM = startTime.getMonth().toString().padStart(2, "0");
@@ -53,36 +64,80 @@ const writeXml = (json_data: any[][]) => {
 
   const allInstances = file.ele("ALL_INSTANCES");
 
-  for (let i = 10; i < 10000; i += 10) {
-    const id = i / 10;
+  for (let i = 1; i < (10000 - STEPS_PER_ENTRY) / STEPS_PER_ENTRY; i++) {
     const instance = allInstances.ele("instance");
-    instance.ele("id", undefined, id);
-    instance.ele("code", undefined, "Kevin");
 
-    const distance = instance.ele("label");
-    distance.ele("group", undefined, "Distance(m)");
-    distance.ele("text", undefined, json_data[i][4].toFixed(3));
+    const firstIndex = i * STEPS_PER_ENTRY;
+    const lastIndex = i * STEPS_PER_ENTRY + STEPS_PER_ENTRY;
 
-    if (json_data[i][2]) {
-      const hr = instance.ele("label");
-      hr.ele("group", undefined, "HR [bmp]");
-      hr.ele("text", undefined, json_data[i][2]);
-    }
-
-    const start: Date = json_data[i - 10][1];
-    const end: Date = json_data[i][1];
+    const start: Date = json_data[firstIndex][TIME];
+    const end: Date = json_data[lastIndex][TIME];
     // @ts-ignore
     const startSeconds = (start - startTime) / 1000;
     // @ts-ignore
     const endSeconds = (end - startTime) / 1000;
 
-    const startEle = instance.ele("start", undefined, startSeconds.toString());
-    const endEle = instance.ele("end", undefined, endSeconds.toString());
+    instance.ele("start", undefined, startSeconds.toFixed(2));
+    instance.ele("end", undefined, endSeconds.toFixed(2));
+
+    instance.ele("id", undefined, i);
+    instance.ele("code", undefined, filename);
+
+    const distanceElement = instance.ele("label");
+    const distance = json_data[lastIndex][DISTANCE] - json_data[firstIndex][DISTANCE];
+    distanceElement.ele("group", undefined, "Distance(m)");
+    distanceElement.ele("text", undefined, distance.toFixed(3));
+
+    const hrs: number[] = json_data
+      .slice(firstIndex, lastIndex)
+      .map((row) => row[HR])
+      .filter((value) => !!value);
+    if (hrs.length > 0) {
+      const maxHRelement = instance.ele("label");
+      maxHRelement.ele("group", undefined, "HR (max) [bmp]");
+      maxHRelement.ele("text", undefined, Math.max(...hrs).toString());
+
+      const minHRelement = instance.ele("label");
+      minHRelement.ele("group", undefined, "HR (min) [bmp]");
+      minHRelement.ele("text", undefined, Math.min(...hrs).toString());
+    }
+
+    const speeds: number[] = json_data
+        .slice(firstIndex, lastIndex)
+        .map((row) => row[SPEED])
+        .filter((value) => !!value);
+    if (speeds.length > 0) {
+      const maxSpeedElement = instance.ele("label");
+      maxSpeedElement.ele("group", undefined, "Speed (max) [km/h]");
+      maxSpeedElement.ele("text", undefined, Math.max(...speeds).toFixed(2));
+
+      const avgSpeedElement = instance.ele("label");
+      const speedSum = speeds.reduce((a, b) => a + b, 0);
+      const speedAvg = (speedSum / speeds.length) || 0;
+      avgSpeedElement.ele("group", undefined, "Speed (avg) [km/h]");
+      avgSpeedElement.ele("text", undefined, speedAvg.toFixed(2));
+    }
+
+    const accelerations: number[] = json_data
+        .slice(firstIndex, lastIndex)
+        .map((row) => row[ACCELERATION])
+        .filter((value) => !!value);
+    if (accelerations.length > 0) {
+      const maxAccelerationElement = instance.ele("label");
+      maxAccelerationElement.ele("group", undefined, "Acceleration (max) [m/s2]");
+      maxAccelerationElement.ele("text", undefined, Math.max(...accelerations).toFixed(2));
+
+      const minAccelerationElement = instance.ele("label");
+      minAccelerationElement.ele("group", undefined, "Acceleration (min) [m/s2]");
+      minAccelerationElement.ele("text", undefined, Math.min(...accelerations).toFixed(2));
+    }
   }
 
   console.log(file.end({ pretty: true }));
 
-  download("filename.xml", file.end({ pretty: true }));
+
+  const outfileName = filename.split(".").slice(0, -1).join(".") + ".xml"
+  download(outfileName, file.end({ pretty: true }));
 };
 
 const download = (filename: string, text: string) => {
